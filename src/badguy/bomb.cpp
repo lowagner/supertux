@@ -21,6 +21,20 @@
 #include "sprite/sprite.hpp"
 #include "supertux/sector.hpp"
 
+/** if the player throws the bomb straight up... */
+static const float THROW_UP_SPEED = -700;
+/** if the player throws the bomb straight down... */
+static const float THROW_DOWN_SPEED = 300;
+/** or if the player throws in a certain direction, he also throws it up */
+static const float THROW_SPEED_Y = -300;
+static const float THROW_SPEED_X = 350;
+/** velocity gets hit by this fraction when bomb hits ground */
+static const float HIT_GROUND_FRACTION_VELOCITY_X = 0.8;
+/** when hitting back, bomb bounces back a bit with this fraction of velocity */
+static const float BOMB_VELOCITY_HIT_WALL_MULTILPLIER = 0.10f;
+/** (de)-acceleration when bomb hits ground and is moving */
+static const float GROUND_FRICTION = 250;
+
 Bomb::Bomb(const Vector& pos, Direction dir, std::string custom_sprite /*= "images/creatures/mr_bomb/mr_bomb.sprite"*/ ) :
   BadGuy( pos, dir, custom_sprite ), 
   state(),
@@ -43,8 +57,26 @@ Bomb::Bomb(const Vector& pos, Direction dir, std::string custom_sprite /*= "imag
 void
 Bomb::collision_solid(const CollisionHit& hit)
 {
-  if(hit.bottom)
-    physic.set_velocity_y(0);
+  if(hit.bottom) {
+     physic.set_velocity_y(0);
+     physic.set_velocity_x(HIT_GROUND_FRACTION_VELOCITY_X*physic.get_velocity_x());
+  } else if(hit.top) {
+    float vy = physic.get_velocity_y();
+    if(vy < 0)
+      physic.set_velocity_y( -vy * BOMB_VELOCITY_HIT_WALL_MULTILPLIER );
+  } else if (hit.left) {
+    float vx = physic.get_velocity_x();
+    if ( vx < 0 ) {
+      physic.set_velocity_x( -BOMB_VELOCITY_HIT_WALL_MULTILPLIER * vx );
+      std::cout << "    BOMB HIT, new vx = " << vx << std::endl;
+    } 
+  } else if (hit.right) {
+    float vx = physic.get_velocity_x();
+    if ( vx > 0 ) {
+      physic.set_velocity_x( -BOMB_VELOCITY_HIT_WALL_MULTILPLIER * vx );
+      std::cout << "    BOMB HIT, new vx = " << vx << std::endl;
+    }
+  }
 
   update_on_ground_flag(hit);
 }
@@ -67,9 +99,15 @@ Bomb::active_update(float elapsed_time)
   ticking->set_position(get_pos());
   if(sprite->animation_done()) {
     explode();
-  }
-  else if (!grabbed) {
+  } else if (!grabbed) {
     movement = physic.get_movement(elapsed_time);
+    if ( on_ground() ) {
+      if(physic.get_velocity_x() < 0) {
+        physic.set_acceleration_x(GROUND_FRICTION);
+      } else if(physic.get_velocity_x() > 0) {
+        physic.set_acceleration_x(-GROUND_FRICTION);
+      } // no friction for physic.get_velocity_x() == 0
+    }
   }
 }
 
@@ -121,10 +159,31 @@ void
 Bomb::ungrab(MovingObject& object, Direction dir)
 {
   this->dir = dir;
-  // portable objects are usually pushed away from Tux when dropped, but we
-  // don't want that, so we set the position
-  //FIXME: why don't we want that? shouldn't behavior be consistent?
-  set_pos(object.get_pos() + Vector(dir == LEFT ? -16 : 16, get_bbox().get_height()*0.66666 - 32));
+  // here we chuck the bomb away from tux
+
+//  float vx = physic.get_velocity_x();  // FIXME:  i don't think these are working quite right.
+//  float vy = physic.get_velocity_y(); // would want them to be the velocity of Tux.
+  Vector mov = object.get_movement();
+  float vx = mov.x; // but I DON't think these are working, either.
+  float vy = mov.y;
+  if ( dir == UP ) {
+    // first set the position a bit far away from us, so we can't grab it right after chucking it
+    set_pos(object.get_pos() - Vector(0, get_bbox().get_height()*0.66666 - 16));
+    physic.set_velocity_y( vy + THROW_UP_SPEED );
+  } else if ( dir == LEFT ) {
+    set_pos(object.get_pos() + Vector(-16, get_bbox().get_height()*0.66666 - 32));
+    physic.set_velocity_y( vy + THROW_SPEED_Y );
+    physic.set_velocity_x( vx - THROW_SPEED_X );
+  } else if ( dir == RIGHT ) {
+    set_pos(object.get_pos() + Vector(16, get_bbox().get_height()*0.66666 - 32));
+    physic.set_velocity_y( vy + THROW_SPEED_Y );
+    physic.set_velocity_x( vx + THROW_SPEED_X );
+  } else if ( dir == DOWN ) {
+    // first set the position a bit far away from us, so we can't grab it right after chucking it
+    set_pos(object.get_pos() + Vector(0, get_bbox().get_height()*0.66666 - 16));
+    physic.set_velocity_y( vy + THROW_DOWN_SPEED );
+  }
+
   set_colgroup_active(COLGROUP_MOVING);
   grabbed = false;
 }

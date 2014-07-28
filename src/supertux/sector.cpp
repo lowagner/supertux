@@ -1226,9 +1226,17 @@ Sector::collision_static_constrains(MovingObject& object)
     } else if(constraints.get_position_right() < infinity) {
       dest.p2.x = constraints.get_position_right() - DELTA;
       dest.p1.x = dest.p2.x - object.get_bbox().get_width();
+      //std::cout << " constraint to left side of tile, i = " << i << std::endl;
+      CollisionHit h;
+      h.right = true;
+      object.collision_solid(h);
     } else if(constraints.get_position_left() > -infinity) {
       dest.p1.x = constraints.get_position_left() + DELTA;
       dest.p2.x = dest.p1.x + object.get_bbox().get_width();
+      //std::cout << " constraint to right side of tile, i = " << i << std::endl;
+      CollisionHit h;
+      h.left = true;
+      object.collision_solid(h);
     }
   }
 

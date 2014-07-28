@@ -275,7 +275,7 @@ MrIceBlock::grab(MovingObject&, const Vector& pos, Direction dir)
 void
 MrIceBlock::ungrab(MovingObject& , Direction dir)
 {
-  if(dir == UP) {
+  if(dir == UP || dir == DOWN) {
     set_state(ICESTATE_FLAT, true);
   } else {
     this->dir = dir;

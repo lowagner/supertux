@@ -1,3 +1,30 @@
+supertux
+========
+
+a faster version of SuperTux.
+
+I have mostly tweaked a few "fundamental constants", which makes the gameplay
+faster and tighter (hopefully).  The physics will feel a bit more like 
+Super Mario World (trademark Nintendo, no copyright infringement intended),
+but with backflips.
+
+Differences from original:
+- holding action causes player (Tux) to navigate faster, most noticeably in the air.
+- backflips are controllable now (though not as quickly as a regular jump).
+- bombs can be thrown with action button: press and hold action to grab, release to throw.  Can be thrown in different directions.
+- tighter on-ground physics for turning and stabilizing jumps.  Necessary for the faster pace of gameplay.
+- hitting a wall negates your horizontal velocity (roughly speaking).
+
+All of the above subject to change and further tweaks.
+
+There are still a few bugs that I need to work out (probably a result of my tweaks), 
+but it's presently fun to play.
+
+
+
+
+Below is the original readme.
+
 #SuperTux - <http://supertux.lethargik.org/>
 Last update: February 26, 2010
 

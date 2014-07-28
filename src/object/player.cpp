@@ -62,17 +62,39 @@ static const std::string IDLE_STAGES[] =
 
 /** acceleration in horizontal direction when walking
  * (all accelerations are in  pixel/s^2) */
-static const float WALK_ACCELERATION_X = 300;
+static const float WALK_ACCELERATION_X = 280;
+/** acceleration in horizontal direction when skidding */
+static const float SKID_ACCELERATION_MULTIPLIER = 2.3f;
+static const float SKID_VELOCITY_MULTIPLIER = 0.7f; // skid puts you automatically at this fraction of velocity
+/** acceleration multiplier when turning but not skidding */
+static const float TURN_ACCELERATION_MULTIPLIER = 3;
 /** acceleration in horizontal direction when running */ 
 static const float RUN_ACCELERATION_X = 400;
-/** acceleration when skidding */
+/** acceleration in horizontal direction when flying */ 
+static const float AIR_ACCELERATION_X = 400;
+static const float BACKFLIP_ACCELERATION_X = 200;
+/** max velocity in horizontal direction when flying */ 
+/** when pressing action, you get these accelerations */
+static const float ACTION_WALK_ACCELERATION_X = 300;
+static const float ACTION_RUN_ACCELERATION_X = 500;
+static const float ACTION_AIR_ACCELERATION_X = 800;
+static const float ACTION_BACKFLIP_ACCELERATION_X = 300;
+static const float ACTION_SKID_ACCELERATION_MULTIPLIER = 3.0f;
+static const float ACTION_TURN_ACCELERATION_MULTIPLIER = 3.5f;
+/** max velocity in horizontal direction when flying */ 
+static const float AIR_SPEED_LIMIT_X = 500; // pixels per second
+/** how fast you rebound from the wall if you hit it but want to bounce back */
+static const float VELOCITY_HIT_WALL_MULTILPLIER = 0.05f;
+/** how fast you can try to overcome wall if your acceleration is in the same direction as your velocity */
+static const float VELOCITY_OVERCOME_WALL = 80; // pixels per second
+/** speed above which to perform skid if attempting a turn */
 static const float SKID_XM = 200;
 /** time of skidding in seconds */
-static const float SKID_TIME = .3f;
+static const float SKID_TIME = .2f;
 /** maximum walk velocity (pixel/s) */
 static const float MAX_WALK_XM = 230;
 /** maximum run velocity (pixel/s) */
-static const float MAX_RUN_XM = 320;
+static const float MAX_RUN_XM = 420;
 /** maximum horizontal climb velocity */
 static const float MAX_CLIMB_XM = 96;
 /** maximum vertical climb velocity */
@@ -81,10 +103,19 @@ static const float MAX_CLIMB_YM = 128;
 static const float WALK_SPEED = 100;
 
 /** multiplied by WALK_ACCELERATION to give friction */
-static const float NORMAL_FRICTION_MULTIPLIER = 1.5f;
+/** if not pressing a direction, this is what you feel (in absence of ice) */
+static const float NORMAL_FRICTION_MULTIPLIER = 3.5f;
 /** multiplied by WALK_ACCELERATION to give friction */
-static const float ICE_FRICTION_MULTIPLIER = 0.1f;
+static const float ICE_FRICTION_MULTIPLIER = 0.2f;
+/** when on ice, movement acceleration hindered by this fraction */
 static const float ICE_ACCELERATION_MULTIPLIER = 0.25f;
+/** if skidding, you don't skid as well as on ground */
+static const float ICE_SKID_ACCELERATION_MULTIPLIER = 0.5f; // additional penalty for skidding
+/** multiplied by AIR_ACCELERATION to give friction in the air */
+static const float AIR_FRICTION_MULTIPLIER = 0.05f;
+/** fraction of velocity to get when hitting the ground */
+static const float HIT_GROUND_FRACTION_VELOCITY_X = 0.95f;
+/** can't hit the ground running, after all... */
 
 /** time of the kick (kicking mriceblock) animation */
 static const float KICK_TIME = .3f;
@@ -370,13 +401,19 @@ Player::update(float elapsed_time)
   if (backflipping && !dying) {
     //prevent player from changing direction when backflipping
     dir = (backflip_direction == 1) ? LEFT : RIGHT;
-    if (backflip_timer.started()) physic.set_velocity_x(100 * backflip_direction);
+    // LUCAS removes this forced velocity_x.  now player has control over backflip.
+//    if (backflip_timer.started()) physic.set_velocity_x(100 * backflip_direction); /// moved to do_backflip
     //rotate sprite during flip
     sprite->set_angle(sprite->get_angle() + (dir==LEFT?1:-1) * elapsed_time * (360.0f / 0.5f));
   }
 
   // set fall mode...
   if(on_ground()) {
+    if ( fall_mode == FALLING || fall_mode == JUMPING ) {
+      // if we were jumping, now we are landed...
+      // set  a fraction of the velocity.
+      physic.set_velocity_x(HIT_GROUND_FRACTION_VELOCITY_X * physic.get_velocity_x());
+    }
     fall_mode = ON_GROUND;
     last_ground_y = get_pos().y;
   } else {
@@ -393,11 +430,17 @@ Player::update(float elapsed_time)
       backflipping = false;
       backflip_direction = 0;
       sprite->set_angle(0.0f);
+      physic.set_velocity_x(0); // stop after landing the backflip.  you stuck it!
 
       // if controls are currently deactivated, we take care of standing up ourselves
       if (deactivated)
         do_standup();
     }
+  }
+  // after a certain period, set backflipper into normal status
+  if (backflipping && (backflip_timer.get_timegone() > 0.50f)) {
+    backflip_direction = 0;
+    sprite->set_angle(0.0f);
   }
 
   // calculate movement for this frame
@@ -469,11 +512,20 @@ Player::is_big()
 void
 Player::apply_friction()
 {
-  if ((on_ground()) && (fabs(physic.get_velocity_x()) < WALK_SPEED)) {
-    physic.set_velocity_x(0);
-    physic.set_acceleration_x(0);
-  } else {
-    float friction = WALK_ACCELERATION_X * (on_ice ? ICE_FRICTION_MULTIPLIER : NORMAL_FRICTION_MULTIPLIER);
+  if (on_ground()) {
+      if ((on_ground()) && (fabs(physic.get_velocity_x()) < WALK_SPEED)) {
+        physic.set_velocity_x(0);
+        physic.set_acceleration_x(0);
+      } else {
+        float friction = WALK_ACCELERATION_X * (on_ice ? ICE_FRICTION_MULTIPLIER : NORMAL_FRICTION_MULTIPLIER);
+        if(physic.get_velocity_x() < 0) {
+          physic.set_acceleration_x(friction);
+        } else if(physic.get_velocity_x() > 0) {
+          physic.set_acceleration_x(-friction);
+        } // no friction for physic.get_velocity_x() == 0
+      }
+  } else { // in air
+    float friction = AIR_ACCELERATION_X * AIR_FRICTION_MULTIPLIER;
     if(physic.get_velocity_x() < 0) {
       physic.set_acceleration_x(friction);
     } else if(physic.get_velocity_x() > 0) {
@@ -490,80 +542,131 @@ Player::handle_horizontal_input()
   float ax = physic.get_acceleration_x();
   float ay = physic.get_acceleration_y();
 
+  bool action = (controller->hold(Controller::ACTION));
+
   float dirsign = 0;
-  if(!duck || physic.get_velocity_y() != 0) {
-    if(controller->hold(Controller::LEFT) && !controller->hold(Controller::RIGHT)) {
-      old_dir = dir;
-      dir = LEFT;
-      dirsign = -1;
-    } else if(!controller->hold(Controller::LEFT)
-              && controller->hold(Controller::RIGHT)) {
-      old_dir = dir;
-      dir = RIGHT;
-      dirsign = 1;
-    }
+  if(controller->hold(Controller::LEFT) && !controller->hold(Controller::RIGHT)) {
+    old_dir = dir;
+    dir = LEFT;
+    dirsign = -1;
+  } else if(!controller->hold(Controller::LEFT)
+            && controller->hold(Controller::RIGHT)) {
+    old_dir = dir;
+    dir = RIGHT;
+    dirsign = 1;
   }
 
-  // do not run if we're holding something which slows us down
-  if ( grabbed_object && grabbed_object->is_hampering() ) {
-    ax = dirsign * WALK_ACCELERATION_X;
-    // limit speed
-    if(vx >= MAX_WALK_XM && dirsign > 0) {
-      vx = MAX_WALK_XM;
-      ax = 0;
-    } else if(vx <= -MAX_WALK_XM && dirsign < 0) {
-      vx = -MAX_WALK_XM;
+  if ( on_ground() ) {
+    // the following works if you are on the ground...
+    if (duck)
+      dirsign = 0;
+    // don't let anybody accelerate x-wise if ducking
+  
+  
+    // do not run if we're holding something which slows us down
+    if ( grabbed_object && grabbed_object->is_hampering() ) {
+      if ( action )
+          ax = dirsign * ACTION_WALK_ACCELERATION_X;
+      else
+          ax = dirsign * WALK_ACCELERATION_X;
+      // limit speed
+      if(vx >= MAX_WALK_XM && dirsign > 0) {
+        vx = MAX_WALK_XM;
+        ax = 0;
+      } else if(vx <= -MAX_WALK_XM && dirsign < 0) {
+        vx = -MAX_WALK_XM;
+        ax = 0;
+      }
+    } else {
+      // not holding onto anything special
+      if( vx * dirsign < MAX_WALK_XM ) {
+        if ( action )
+          ax = dirsign * ACTION_WALK_ACCELERATION_X;
+        else
+          ax = dirsign * WALK_ACCELERATION_X;
+      } else {
+        if ( action )
+          ax = dirsign * ACTION_RUN_ACCELERATION_X;
+        else
+          ax = dirsign * RUN_ACCELERATION_X;
+      }
+      // limit speed
+      if(vx >= MAX_RUN_XM && dirsign > 0) {
+        vx = MAX_RUN_XM;
+        ax = 0;
+      } else if(vx <= -MAX_RUN_XM && dirsign < 0) {
+        vx = -MAX_RUN_XM;
+        ax = 0;
+      }
+    }
+  
+    // we can reach WALK_SPEED without any acceleration
+    if(dirsign != 0 && fabs(vx) < WALK_SPEED) {
+      vx = dirsign * WALK_SPEED;
+    }
+  
+    // changing directions?
+    if(((vx < 0 && dirsign >0) || (vx>0 && dirsign<0))) {
+      // let's skid!
+      if(fabs(vx)>SKID_XM && !skidding_timer.started()) {
+        skidding_timer.start(SKID_TIME);
+        sound_manager->play("sounds/skid.wav");
+        // dust some particles
+        Sector::current()->add_object(
+          new Particles(
+            Vector(dir == RIGHT ? get_bbox().p2.x : get_bbox().p1.x, get_bbox().p2.y),
+            dir == RIGHT ? 270+20 : 90-40, dir == RIGHT ? 270+40 : 90-20,
+            Vector(280, -260), Vector(0, 300), 3, Color(.4f, .4f, .4f), 3, .8f,
+            LAYER_OBJECTS+1));
+  
+        if(on_ice) {
+          // this pulls double duty.  try not to skid on ice!
+          ax *= ICE_SKID_ACCELERATION_MULTIPLIER;
+        } else {
+          vx *= SKID_VELOCITY_MULTIPLIER;
+          if (action )
+            ax *= ACTION_SKID_ACCELERATION_MULTIPLIER;
+          else
+            ax *= SKID_ACCELERATION_MULTIPLIER;
+        }
+      } else {
+        // not skidding, but turning around
+        if (action)
+          ax *= ACTION_TURN_ACCELERATION_MULTIPLIER;
+        else
+          ax *= TURN_ACCELERATION_MULTIPLIER;
+      }
+    }
+  
+    if(on_ice) {
+      ax *= ICE_ACCELERATION_MULTIPLIER;
+    }
+  
+    //Check speedlimit.
+    if( speedlimit > 0 &&  vx * dirsign >= speedlimit ) {
+      vx = dirsign * speedlimit;
       ax = 0;
     }
+  
   } else {
-    if( vx * dirsign < MAX_WALK_XM ) {
-      ax = dirsign * WALK_ACCELERATION_X;
-    } else {
-      ax = dirsign * RUN_ACCELERATION_X;
+    // in the air, not on ground
+    if ( backflipping ) {
+      if (action)
+        ax = dirsign * ACTION_BACKFLIP_ACCELERATION_X; 
+      else
+        ax = dirsign * BACKFLIP_ACCELERATION_X; 
+    } else { 
+      // not backflipping
+      if (action)
+        ax = dirsign * ACTION_AIR_ACCELERATION_X; 
+      else
+        ax = dirsign * AIR_ACCELERATION_X; 
     }
-    // limit speed
-    if(vx >= MAX_RUN_XM && dirsign > 0) {
-      vx = MAX_RUN_XM;
+    //Check speedlimit.
+    if( vx * dirsign >= AIR_SPEED_LIMIT_X ) {
+      vx = dirsign * AIR_SPEED_LIMIT_X;
       ax = 0;
-    } else if(vx <= -MAX_RUN_XM && dirsign < 0) {
-      vx = -MAX_RUN_XM;
-      ax = 0;
     }
-  }
-
-  // we can reach WALK_SPEED without any acceleration
-  if(dirsign != 0 && fabs(vx) < WALK_SPEED) {
-    vx = dirsign * WALK_SPEED;
-  }
-
-  //Check speedlimit.
-  if( speedlimit > 0 &&  vx * dirsign >= speedlimit ) {
-    vx = dirsign * speedlimit;
-    ax = 0;
-  }
-
-  // changing directions?
-  if(on_ground() && ((vx < 0 && dirsign >0) || (vx>0 && dirsign<0))) {
-    // let's skid!
-    if(fabs(vx)>SKID_XM && !skidding_timer.started()) {
-      skidding_timer.start(SKID_TIME);
-      sound_manager->play("sounds/skid.wav");
-      // dust some particles
-      Sector::current()->add_object(
-        new Particles(
-          Vector(dir == RIGHT ? get_bbox().p2.x : get_bbox().p1.x, get_bbox().p2.y),
-          dir == RIGHT ? 270+20 : 90-40, dir == RIGHT ? 270+40 : 90-20,
-          Vector(280, -260), Vector(0, 300), 3, Color(.4f, .4f, .4f), 3, .8f,
-          LAYER_OBJECTS+1));
-
-      ax *= 2.5;
-    } else {
-      ax *= 2;
-    }
-  }
-
-  if(on_ice) {
-    ax *= ICE_ACCELERATION_MULTIPLIER;
   }
 
   physic.set_velocity(vx, vy);
@@ -641,6 +744,8 @@ Player::do_backflip() {
   backflip_direction = (dir == LEFT)?(+1):(-1);
   backflipping = true;
   do_jump(-580);
+  physic.set_velocity_x(100 * backflip_direction);
+
   sound_manager->play("sounds/flip.wav");
   backflip_timer.start(TUX_BACKFLIP_TIME);
 }
@@ -778,7 +883,8 @@ Player::handle_input()
   }
 
   /* Handle horizontal movement: */
-  if (!backflipping) handle_horizontal_input();
+  //if (!backflipping) 
+  handle_horizontal_input();
 
   /* Jump/jumping? */
   if (on_ground())
@@ -826,6 +932,8 @@ Player::handle_input()
         moving_object->set_pos(dest.p1);
         if(controller->hold(Controller::UP)) {
           grabbed_object->ungrab(*this, UP);
+        } else if (controller->hold(Controller::DOWN)) {
+          grabbed_object->ungrab(*this, DOWN);
         } else {
           grabbed_object->ungrab(*this, dir);
         }
@@ -870,9 +978,9 @@ Player::try_grab()
     Sector* sector = Sector::current();
     Vector pos;
     if(dir == LEFT) {
-      pos = Vector(bbox.get_left() - 5, bbox.get_bottom() - 16);
+      pos = Vector(bbox.get_left() + 5, bbox.get_bottom() - 16); // switched - to + 5 so you can grab something right on top of you (i.e. a bomb)
     } else {
-      pos = Vector(bbox.get_right() + 5, bbox.get_bottom() - 16);
+      pos = Vector(bbox.get_right() - 5, bbox.get_bottom() - 16); // see above.
     }
 
     for(Sector::Portables::iterator i = sector->portables.begin();
@@ -1224,14 +1332,37 @@ Player::collision_solid(const CollisionHit& hit)
   } else if(hit.top) {
     if(physic.get_velocity_y() < 0)
       physic.set_velocity_y(.2f);
-  }
-
-  if(hit.left || hit.right) {
-    physic.set_velocity_x(0);
-  }
-
+  } else if (hit.left) {
+    float vx = physic.get_velocity_x();
+    float ax = physic.get_acceleration_x(); // see if player wants to be going left.
+    if ( vx < 0 ) { // if you're going left 
+      if ( ax > 0 ) {
+        //but want to bounce right...
+        physic.set_velocity_x( -VELOCITY_HIT_WALL_MULTILPLIER * vx );
+        //std::cout << "    BOUNCE HIT, new vx = " << vx << std::endl;
+      } else {
+        // here you want to overcome the wall
+        physic.set_velocity_x( -VELOCITY_OVERCOME_WALL );
+        //std::cout << "    DESIRED HIT, new vx = " << vx << std::endl;
+      }
+    }
+ 
+  } else if (hit.right) {
+    float vx = physic.get_velocity_x();
+    float ax = physic.get_acceleration_x(); // see if player wants to be going left.
+    if ( vx > 0 ) { // if you're going right
+      if ( ax < 0 ) {
+        //but want to bounce left...
+        physic.set_velocity_x( -VELOCITY_HIT_WALL_MULTILPLIER * vx );
+        //std::cout << "    BOUNCE HIT, new vx = " << vx << std::endl;
+      } else {
+        // here you want to overcome the wall
+        physic.set_velocity_x( VELOCITY_OVERCOME_WALL );
+        //std::cout << "    DESIRED HIT, new vx = " << vx << std::endl;
+      }
+    }
+  } else if(hit.crush) {
   // crushed?
-  if(hit.crush) {
     if(hit.left || hit.right) {
       kill(true);
     } else if(hit.top || hit.bottom) {
@@ -1565,10 +1696,11 @@ Player::handle_input_climbing()
   } else {
     can_jump = true;
   }
-  if (controller->hold(Controller::ACTION)) {
-    stop_climbing(*climbing);
-    return;
-  }
+// // lucas edit.  don't let action stop climbing.
+//  if (controller->hold(Controller::ACTION)) {
+//    stop_climbing(*climbing);
+//    return;
+//  }
   physic.set_velocity(vx, vy);
   physic.set_acceleration(0, 0);
 }
